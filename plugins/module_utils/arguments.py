@@ -32,6 +32,17 @@ CHANGE_REQUEST_MAPPING_SPEC = dict(
     ),
 )
 
+REQUEST_ITEM_MAPPING_SPEC = dict(
+    type="dict",
+    required=False,
+    options=dict(
+        priority=dict(type="dict"),
+        impact=dict(type="dict"),
+        urgency=dict(type="dict"),
+        state=dict(type="dict"),
+    ),
+)
+
 
 CHANGE_REQUEST_TASK_MAPPING_SPEC = dict(
     type="dict",
@@ -144,6 +155,7 @@ SHARED_SPECS = dict(
         ),
     ),
     incident_mapping=INCIDENT_MAPPING_SPEC,
+    request_item_mapping=REQUEST_ITEM_MAPPING_SPEC,
     change_request_mapping=CHANGE_REQUEST_MAPPING_SPEC,
     change_request_task_mapping=CHANGE_REQUEST_TASK_MAPPING_SPEC,
     configuration_item_mapping=CONFIGURATION_ITEM_MAPPING_SPEC,
