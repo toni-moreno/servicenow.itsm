@@ -1,26 +1,16 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copyright: (c) 2022, XLAB Steampunk <steampunk@xlab.si>
+# Copyright: (c) 2022, Toni Moreno<toni.moreno@gmail.com>
 #
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 
-import json
-import os
-import re
-import time
-
-from ansible.module_utils.basic import AnsibleModule
-
-from ..module_utils import (arguments, attachment, client, errors, query,
-                            table, utils)
-
 __metaclass__ = type
 
 
 DOCUMENTATION = r"""
-module: cmdb_relationship.py
+module: cmdb_relationship
 
 author:
   - Toni Moreno (@toni-moreno)
@@ -36,33 +26,36 @@ extends_documentation_fragment:
 options:
   state:
     description:
-      - present or absent
+      - State of the configuration item.
     type: str
-    required: false by default is present
+    choices: [ present, absent ]
+    default: present
   relationship_name:
     description:
-      - The name of the relationship as described in the CMDB cmdb_rel_type table
+      - The name of the relationship as described in the CMDB cmdb_rel_type table.
     type: str
     required: true
   relationship_type:
     description:
-      - The type of the relationship [ci_downstream", "ci_upstream]
+      - The type of the relationship.
     type: str
+    choices: [ ci_downstream, ci_upstream ]
     required: true
   parent_ci_name:
-    description: The name of the parent CI
+    description: The name of the parent CI.
     type: str
     required: true
   parent_ci_class_name:
-    description: The class name of the parent CI
+    description: The class name of the parent CI.
     type: str
     required: true
   child_ci_name_list:
-    description: a list of child CI names from the same class
+    description: a list of child CI names from the same class.
     type: list
+    elements: str
     required: true
   child_ci_class_name:
-    description: the class name of the child CI list
+    description: the class name of the child CI list.
     type: str
     required: true
 
@@ -70,7 +63,7 @@ notes:
   - Supports check_mode.
 """
 
-EXAMPLES = """
+EXAMPLES = r"""
   - name: ServiceNow create relationship between two or more CMDB records
     servicenow.itsm.cmdb_relationship:
       state: present
@@ -114,8 +107,9 @@ record:
     relations_changed_details:
         description: array with detailed information about each created relations
         returned: success
-        type: list of dict
-        sample: 
+        type: list
+        elements: dict
+        sample:
             - child: MY_APP2
               child_id: c3833a6c07241110befff6fd7c1ed0bb
               parent: MY_SERVICE
@@ -140,6 +134,12 @@ record:
             - status: OK
 """
 
+import json
+
+from ansible.module_utils.basic import AnsibleModule
+
+from ..module_utils import (arguments, attachment, client, errors, query,
+                            table, utils)
 
 # Array of structures of data got from /api/now/cmdbrelation/types
 # [{
@@ -164,7 +164,15 @@ def get_relationship_name_id(client, relationship_name):
     return relationship_id
 
 # {
-#   "item": "[{\"type\":\"Depends on::Used by\",\"type_id\":\"1a9cb166f1571100a92eb60da2bce5c5\",\"child\":\"MI_SERVICIO_ORACLE_DE_PRUEBA_OPQRSTUVWXYZ\",\"child_id\":\"889e52e807e01110befff6fd7c1ed036\",\"parent\":\"KKNEW\",\"parent_id\":\"6a29040107a01110befff6fd7c1ed070\",\"sys_id\":\"\",\"relationshipType\":\"ci_downstream\"}]",
+#   "item": "[{\"type\":
+#             \"Depends on::Used by\",
+#             \"type_id\":\"1a9cb166f1571100a92eb60da2bce5c5\",
+#             \"child\":\"MI_SERVICE\",
+#             \"child_id\":\"889e52e807e01110befff6fd7c1ed036\",
+#             \"parent\":\"MY_APP1\",
+#             \"parent_id\":\"6a29040107a01110befff6fd7c1ed070\",
+#             \"sys_id\":\"\",
+#             \"relationshipType\":\"ci_downstream\"}]",
 #   "type": "cmdb_ci",
 #   "isSuggestedRelationship": true
 # }
@@ -190,12 +198,12 @@ def delete_relationship(client, all_relationships):
 
 
 def check_relationship_exist(client, relationship):
-    query = "child=" + relationship['child_id'] + "^ANDparent=" + \
-        relationship['parent_id'] + "^ANDtype=" + relationship['type_id']
+    query = "child=" + relationship['child_id'] + "^parent=" + \
+        relationship['parent_id'] + "^type=" + relationship['type_id']
     children = client.list_records(
-        'cmdb_rel_ci', dict({'sysparm_query': query}))
-    # print(children)
-    if len(children) > 0:
+        'cmdb_rel_ci', dict({'sysparm_query': query,'sysparm_fields':'parent,child,type,sys_id'}))
+    assert len(children) < 2 , "Error, cmdb_rel_ci query TOO MANY ROWS"
+    if len(children) == 1:
         # print("Relationship already exist")
         return True, children[0]['sys_id']
     else:
@@ -210,7 +218,7 @@ def ensure_absent(result, snow_client, relations):
     result['relations_delete_api_result'] = res
     if res['status'] != "OK":
         result['failed'] = True
-        result['msg'] = "Error removing relationship: {}".format(
+        result['msg'] = "Error removing relationship: {0}".format(
             res['message'])
     else:
         result['relations_deleted'] = len(relations)
@@ -224,7 +232,7 @@ def ensure_present(result, snow_client, relations):
     result['relations_create_api_result'] = res
     if res['status'] != "OK":
         result['failed'] = True
-        result['msg'] = "Error creating relationship: {}".format(
+        result['msg'] = "Error creating relationship: {0}".format(
             res['message'])
     else:
         result['relations_created'] = len(relations)
@@ -253,27 +261,33 @@ def run(module, snow_client, table_client):
     id = get_relationship_name_id(snow_client, relationship_name)
     if not id:
         raise Exception(
-            "Error getting relationship id: {}".format(relationship_name))
+            "Error getting relationship id: {0}".format(relationship_name))
 
     # Get parent sys_id
 
     parent = table_client.list_records(
-        parent_ci_class_name, dict({'name': parent_ci_name}))
+        parent_ci_class_name, dict({'name': parent_ci_name,'sysparm_fields':'name,sys_id'}))
     if len(parent) != 1:
         raise Exception(
-            "Error getting parent id: got {} resuts:  for CI {}".format(len(parent), parent_ci_name))
+            "Error getting parent id: got {0} resuts:  for CI {1}".format(len(parent), parent_ci_name))
     parent_sys_id = parent[0]['sys_id']
+
+    #result['parent_query'] = parent_ci_name
+    #result['parent_result'] = parent
 
     # Get children sys_id's
 
     query = ""
     for child_ci_name in child_ci_name_list:
         if child_ci_name == child_ci_name_list[-1]:
-            query += "name={}".format(child_ci_name)
+            query += "name={0}".format(child_ci_name)
         else:
-            query += "name={}^OR".format(child_ci_name)
+            query += "name={0}^OR".format(child_ci_name)
     children = table_client.list_records(
-        child_ci_class_name, dict({'sysparm_query': query}))
+        child_ci_class_name, dict({'sysparm_query': query, 'sysparm_fields': 'name,sys_id'}))
+
+    #result['children_query'] = query
+    #result['children_result'] = children
 
     # generate relation array to send to API
     relations = []
@@ -321,7 +335,7 @@ def main():
         state=dict(type='str', default='present', choices=['present', 'absent']),
         parent_ci_name=dict(type='str', required=True),
         parent_ci_class_name=dict(type='str', required=True),
-        child_ci_name_list=dict(type='list', required=True),
+        child_ci_name_list=dict(type='list', elements='str', required=True),
         child_ci_class_name=dict(type='str', required=True),
         relationship_name=dict(type='str', required=True),
         relationship_type=dict(type='str', choices=[
